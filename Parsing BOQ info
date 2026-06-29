@@ -1,0 +1,39 @@
+// Sample backend parser loop logic
+async function parseExcelBOQ(fileBuffer, columnMapping) {
+  const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+  const sheetJson = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+  
+  let currentSectionTitle = "General";
+  let itemsToInsert = [];
+
+  for (let row of sheetJson) {
+    const description = row[columnMapping.descriptionIdx];
+    const unit = row[columnMapping.unitIdx];
+    const qty = parseFloat(String(row[columnMapping.qtyIdx]).replace(/[^0-9.-]/g, ''));
+    const rate = parseFloat(String(row[columnMapping.rateIdx]).replace(/[^0-9.-]/g, ''));
+
+    // Skip entirely empty rows
+    if (!description) continue;
+
+    // Condition A: If it's a section header row
+    if (description && !qty && !rate) {
+      currentSectionTitle = description;
+      continue; // Move to next row
+    }
+
+    // Condition B: If it's a functional BOQ item row
+    if (qty >= 0 && rate >= 0) {
+      itemsToInsert.push({
+        section_number: currentSectionTitle,
+        item_title: description,
+        unit_of_measure: unit || 'item',
+        quantity: qty,
+        unit_rate: rate,
+        total_amount: qty * rate // Compute strictly server-side
+      });
+    }
+  }
+
+  // Execute inside a single SQL/NoSQL transaction to prevent partial corrupt data
+  await db.BOQItems.bulkCreate(itemsToInsert);
+}
